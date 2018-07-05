@@ -1,1 +1,13 @@
-# Demonstration of the HTTPotion starting to fail when number of parallel loads increases
+# HTTPotion issue
+
+## Running
+
+```
+cd issues_demo
+mix deps.get
+iex -S mix
+```
+```elixir
+Demo.Runner.run_server
+```
+
