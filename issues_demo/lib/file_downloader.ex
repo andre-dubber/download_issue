@@ -4,11 +4,10 @@ defmodule Demo.FileDownloader do
 
   def download_url({file_id, url}, directory, pid) do
     file = File.open("#{directory}/output#{file_id}.wav", [:binary, :write])
-    {:ok, worker_pid} = HTTPotion.spawn_worker_process(url)
     case HTTPotion.get(url,
            [follow_redirects: true,
              timeout: 60_000,
-             ibrowse: [direct: worker_pid,
+             ibrowse: [
                stream_to: {self(), :once},
                max_sessions: 10,
                max_pipeline_size: 10,
