@@ -2,22 +2,33 @@ defmodule Demo.Runner do
   @moduledoc """
   Documentation for IssuesDemo.
   """
-  alias Demo.{FileDownloader, DownloadServer}
+  alias Demo.{FileDownloader, FileDownloaderPoison, DownloadServer}
   require Logger
 
   @sample_url "https://s3-ap-southeast-2.amazonaws.com/dubber-andre/PANO0001.DNG"
 #  @sample_url "https://s3-ap-southeast-2.amazonaws.com/dubber-andre-wav/sample_stereo.wav"
 
+
   def run_simple(qty \\ 100) do
     get_file_list(qty)
       |> Enum.map(fn({id, file}) ->
                     directory = DownloadServer.get_download_folder(id)
-                    spawn_monitor(FileDownloader, :download_url, [{id, file}, directory])
+                    spawn_monitor(Demo.FileDownloaderPoison, :download_url, [{id, file}, directory, self()])
                   end)
     get_result(%{success: 0, error: 0}, qty)
   end
 
   def run_server(qty \\ 100) do
+    :ok = :hackney_pool.start_pool(:pool1, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool2, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool3, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool4, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool5, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool6, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool7, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool8, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool9, [timeout: 200000, max_connections: 150])
+    :ok = :hackney_pool.start_pool(:pool0, [timeout: 200000, max_connections: 150])
     get_file_list(qty)
     |> Enum.map(fn({id, file}) ->
       DownloadServer.download_file(file, self(), id)

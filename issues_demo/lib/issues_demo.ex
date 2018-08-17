@@ -14,7 +14,7 @@ defmodule IssuesDemo do
                                               prefix: "temp_files_#{id}_",
                                               suffix: ""})
 
-                    spawn_monitor(FileDownloader, :download_url, [{id, file}, directory])
+                    spawn_monitor(FileDownloaderPoison, :download_url, [{id, file}, directory])
                   end)
     get_result(%{success: 0, error: 0})
   end

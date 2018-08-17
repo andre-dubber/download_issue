@@ -1,74 +1,66 @@
-defmodule Demo.FileDownloader do
+defmodule Demo.FileDownloaderPoison do
 
   require Logger
 
-  def download_url({file_id, url}, directory, pid) do
+  def download_url(params, directory, pid, pool \\ :pool1)
+  def download_url({file_id, url}, directory, pid, pool) do
+    IO.inspect pool
     file = File.open("#{directory}/output#{file_id}.wav", [:binary, :write])
-    {:ok, worker_pid} = HTTPotion.spawn_worker_process(url)
-    case HTTPotion.get(url,
-           [follow_redirects: true,
-             timeout: 60_000,
-             ibrowse: [direct: worker_pid,
-               stream_to: {self(), :once},
-               max_sessions: 100,
-               max_pipeline_size: 100,
-               stream_chunk_size: 32 * 1024]]) do
-      %HTTPotion.AsyncResponse{id: id} ->
+    opts = [stream_to: self(), async: :once, hackney: [follow_redirect: true, pool: pool]]
+    case HTTPoison.get!(url, [], opts) do
+      %HTTPoison.AsyncResponse{id: id} ->
         async_response(url, id, %{directory: directory, chunk_no: 0, file: file,
                                   file_id: file_id, pid: pid, start: Time.utc_now})
 
-      %HTTPotion.ErrorResponse{message: msg} ->
+      %HTTPoison.Error{reason: msg} ->
         Logger.error("Received error #{inspect msg} downloading file #{file_id}")
         raise "#{inspect msg}"
     end
   end
 
   defp async_response(url, id, %{pid: pid, file_id: file_id} = state) do
-
-    case HTTPoison.stream_next(id) do
-      :ok -> :ok
-      {:error, ibrowse_error} ->
+    case HTTPoison.stream_next(%HTTPoison.AsyncResponse{id: id}) do
+      {:ok, %HTTPoison.AsyncResponse{id: ^id}} -> :ok
+      {:error, poison_error} ->
         Logger.error("HTTPotion returned stream_next returned non-OK response " <>
-                     "#{inspect ibrowse_error} downloading file #{file_id} ")
-        raise "#{inspect ibrowse_error}"
+                     "#{inspect poison_error} downloading file #{file_id} ")
+        raise "#{inspect poison_error}"
     end
 
     receive do
-      {:ibrowse_async_response, ^id, {:error, error}} ->
-        process_download_error(id, url, error, state)
+      %HTTPoison.AsyncStatus{code: 200, id: ^id} -> async_response(url, id, state)
 
-      {:ibrowse_async_response, ^id, new_data} ->
-        process_received_data(id, url, new_data, state)
+      %HTTPoison.AsyncRedirect{headers: _headers, id: ^id, to: redirect_url} ->
+                download_url({file_id, redirect_url}, state.directory, pid)
 
-      {:ibrowse_async_headers, ^id, '200', headers} ->
-        {_key, value} = headers
-                        |> Enum.filter(fn({key, _value}) -> key == 'Content-Length' end)
-                        |> hd
-        _bytes = value |> List.to_string |> Integer.parse
-        async_response(url, id, state)
+      %HTTPoison.AsyncStatus{code: code, id: ^id} ->
+                Logger.error("HTTPotion returned non-200 status downloading file #{file_id}")
+                raise "HTTP Error #{code}"
 
-      {:ibrowse_async_headers, ^id, status_code, _headers} ->
-        Logger.error("HTTPotion returned non-200 status downloading file #{file_id}")
-        raise "HTTP Error #{status_code}"
+      %HTTPoison.AsyncHeaders{headers: headers, id: ^id} ->
+                {_key, value} = headers
+                                |> Enum.filter(fn({key, _value}) -> key == "Content-Length" end)
+                                |> hd
+                _bytes = value |> Integer.parse
+                async_response(url, id, state)
 
-      {:ibrowse_async_response_timeout, ^id} ->
-        Logger.warn("HTTPotion timed out waiting for response downloading file #{file_id}")
-        raise "Timed out waiting for download"
+      %HTTPoison.AsyncChunk{chunk: new_data, id: ^id} ->
+                process_received_data(id, url, new_data, state)
 
-      {:error, :connection_closed_no_retry} ->
-        Logger.error("HTTPotion connection_closed_no_retry downloading file #{file_id}")
-        raise "connection_closed_no_retry"
-
-      {:ibrowse_async_response, ^id, []} ->
-        async_response(url, id, state)
-
-      {:ibrowse_async_response_end, ^id} ->
-        Logger.info("FileDownloader completed downloading")
-        File.close(state.file)
-        send(pid, {__MODULE__, :download_complete,
+      %HTTPoison.AsyncEnd{id: ^id} ->
+                Logger.info("FileDownloader completed downloading")
+                File.close(state.file)
+                send(pid, {__MODULE__, :download_complete,
                   {:ok, file_id, state.chunk_no - 1, Time.diff(Time.utc_now, state.start)}})
 
-        {:ok, state}
+                {:ok, state}
+
+      %HTTPoison.Error{id: ^id, reason: {:closed, :timeout}} ->
+                 Logger.warn("HTTPotion timed out waiting for response downloading file #{file_id}")
+                 raise "Timed out waiting for download"
+
+      error ->
+                process_download_error(id, url, error, state)
     end
   end
 
@@ -115,7 +107,7 @@ defmodule Demo.FileDownloader do
   def process_chunk(new_data, %{file: file} = state) do
     partname = state.chunk_no |> Integer.to_string |> String.pad_leading(5, "0")
     path = Path.join(state.directory, "part.#{partname}")
-    File.write!(path, to_charlist(new_data), [:binary, :write])
+    File.write!(path, new_data, [:binary, :write])
 
     :done
   end
@@ -129,6 +121,5 @@ defmodule Demo.FileDownloader do
         File.close(file)
         {:error, "Error saving data to disk"}
     end
-
   end
 end
